@@ -1,6 +1,8 @@
 import streamlit as st
 import sqlite3
 import threading
+import random
+import time
 
 # Database file
 DB_NAME = "banking_system.db"
@@ -13,6 +15,10 @@ if "state" not in st.session_state:
     st.session_state.state = "follower"  # Possible states: leader, follower, candidate, failed
 if "current_leader" not in st.session_state:
     st.session_state.current_leader = None
+if "node_states" not in st.session_state:
+    st.session_state.node_states = {"leader": 0, "follower": 1, "failed": 0}  # Tracking the number of nodes in each state
+if "node_id" not in st.session_state:
+    st.session_state.node_id = random.randint(1000, 9999)  # Unique ID for each node
 
 # Database initialization
 def init_db():
@@ -48,12 +54,16 @@ init_db()
 # Main application function
 def main():
     st.title("Distributed Banking System")
-    
+    st.markdown("<h2 style='color: #4CAF50;'>Multi-Node System</h2>", unsafe_allow_html=True)
+
     # Sidebar Node State Display
     st.sidebar.header("Node State")
-    st.sidebar.markdown(f"**Current State**: {st.session_state.state.upper()}")
+    st.sidebar.markdown(f"**Current State**: {st.session_state.state.upper()}", unsafe_allow_html=True)
     if st.session_state.state == "leader":
-        st.sidebar.markdown(f"**Leader**: {st.session_state.current_leader}")
+        st.sidebar.markdown(f"**Leader**: {st.session_state.current_leader}", unsafe_allow_html=True)
+
+    # Display Node State Chart
+    render_node_state_chart()
 
     # Sidebar Menu
     menu = st.sidebar.radio("Menu", ["Accounts", "Transfer Funds", "Transaction Logs"])
@@ -255,13 +265,12 @@ def transfer_funds(source_account, target_account, amount):
             cursor.execute('''
                 INSERT INTO logs (action, account_id, amount, target_account, status, timestamp)
                 VALUES (?, ?, ?, ?, ?, datetime('now'))
-            ''', ("transfer", source_account, amount, target_account, "completed"))
-
+            ''', ("TRANSFER", source_account, amount, target_account, "Success"))
             conn.commit()
             conn.close()
-            return "success"
+        return "success"
     except Exception as e:
-        return f"Transfer error: {e}"
+        return f"Error during transfer: {e}"
 
 def get_logs():
     try:
@@ -275,21 +284,44 @@ def get_logs():
         st.error(f"Error fetching logs: {e}")
         return []
 
-# Node control functions
+# Simulate failure and recovery
 def simulate_failure():
-    st.session_state.state = "failed"
-    st.session_state.current_leader = None
-    st.warning("Node state set to FAILED. Transactions are blocked.")
+    if st.session_state.state == "leader":
+        st.session_state.node_states["leader"] -= 1
+        st.session_state.node_states["failed"] += 1
+        st.session_state.state = "failed"
+        st.session_state.current_leader = None
+        st.warning("Leader node has failed. A new leader will be elected.")
+    elif st.session_state.state == "follower":
+        st.session_state.node_states["follower"] -= 1
+        st.session_state.node_states["failed"] += 1
+        st.session_state.state = "failed"
+        st.warning("Follower node has failed.")
 
 def recover_node():
-    st.session_state.state = "follower"
-    st.session_state.current_leader = None
-    st.success("Node recovered to FOLLOWER state.")
+    if st.session_state.state == "failed":
+        st.session_state.node_states["failed"] -= 1
+        st.session_state.node_states["follower"] += 1
+        st.session_state.state = "follower"
+        st.success("Node has been recovered and is now a follower.")
 
 def simulate_leader_election():
-    st.session_state.state = "leader"
-    st.session_state.current_leader = "LocalNode"
-    st.success("Node elected as LEADER. All transactions can be processed.")
+    # If the node is failed, it cannot elect a leader
+    if st.session_state.state == "failed":
+        st.error("Cannot elect a leader while in the failed state.")
+        return
+    
+    # Automatically appoint a leader if no leader exists
+    if not st.session_state.current_leader:
+        st.session_state.state = "leader"
+        st.session_state.current_leader = f"Node-{st.session_state.node_id}"
+        st.session_state.node_states["leader"] += 1
+        st.success(f"Node-{st.session_state.node_id} has been elected as the leader.")
+
+# Render Node State Chart
+def render_node_state_chart():
+    st.subheader("Node State Distribution")
+    st.bar_chart(st.session_state.node_states)
 
 if __name__ == "__main__":
     main()
